@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Aerogenerador en corte</title>
+<style>
+:root{--sky1:#e6f0f7;--sky2:#b9d3e4;--panel:rgba(255,255,255,.92);--text:#16222b;--muted:#51626e;--accent:#d2641c;--border:#c3d2dc;--chip:#ffffff;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--sky1:#142330;--sky2:#0b141c;--panel:rgba(20,32,42,.92);--text:#e8f0f5;--muted:#9bb0bf;--accent:#ff9a4d;--border:#2c4152;--chip:#1b2c39}}
+:root[data-theme="dark"]{--sky1:#142330;--sky2:#0b141c;--panel:rgba(20,32,42,.92);--text:#e8f0f5;--muted:#9bb0bf;--accent:#ff9a4d;--border:#2c4152;--chip:#1b2c39}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:linear-gradient(180deg,var(--sky1),var(--sky2));color:var(--text);font-family:"Segoe UI",system-ui,-apple-system,Roboto,sans-serif;overflow:hidden}
+#app{position:relative;width:100%;height:100%}
+canvas{display:block;width:100%;height:100%;touch-action:none}
+header{position:absolute;left:16px;top:14px;max-width:46%}
+h1{margin:0;font-size:1.35rem;font-weight:700;letter-spacing:-.01em}
+header p{margin:4px 0 0;font-size:.85rem;color:var(--muted);line-height:1.4}
+.panel{position:absolute;right:16px;top:14px;width:310px;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px 18px;backdrop-filter:blur(6px)}
+.panel h2{margin:0 0 6px;font-size:1.1rem;color:var(--accent)}
+.panel p{margin:0;font-size:.92rem;line-height:1.5}
+.panel .dato{margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-size:.85rem;color:var(--muted)}
+.bar{position:absolute;left:0;right:0;bottom:calc(10px + env(safe-area-inset-bottom,0px));display:flex;gap:6px;padding:0 12px;overflow-x:auto;scrollbar-width:thin}
+.bar button,.ctl button{flex:none;font:inherit;font-size:.8rem;color:var(--text);background:var(--chip);border:1px solid var(--border);border-radius:999px;padding:6px 12px;cursor:pointer}
+.bar button:hover,.ctl button:hover{border-color:var(--accent)}
+.bar button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.ctl{position:absolute;left:16px;bottom:calc(58px + env(safe-area-inset-bottom,0px));display:flex;gap:6px}
+@media (max-width:700px){header{max-width:none;right:16px}header p{display:none}.panel{top:auto;right:12px;left:12px;width:auto;bottom:calc(52px + env(safe-area-inset-bottom,0px))}.ctl{bottom:auto;top:46px}}
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="c"></canvas>
+  <header>
+    <h1>Aerogenerador en corte</h1>
+    <p>Arrastra para girar, usa la rueda para acercar y haz clic en una pieza para conocerla.</p>
+  </header>
+  <div class="ctl"><button id="spin">Detener giro</button><button id="reset">Restablecer vista</button></div>
+  <div class="panel" id="panel">
+    <h2 id="pn">Selecciona una pieza</h2>
+    <p id="pd">Toca cualquier parte del modelo o elige una de la lista inferior.</p>
+    <div class="dato" id="pt" hidden></div>
+  </div>
+  <div class="bar" id="bar"></div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const INFO={
+ base:["Cimentación","Base de hormigón armado enterrada que sostiene todo el aerogenerador y transmite al suelo su peso y el empuje del viento.","Puede superar las 500 toneladas de hormigón."],
+ torre:["Torre","Estructura tubular cónica de acero que eleva la góndola hasta donde el viento es más fuerte y constante.","Altura típica: 80 a 120 m."],
+ escalera:["Escalera de acceso","Permite al personal de mantenimiento subir hasta la góndola. Muchas torres añaden un ascensor.","Puede tener más de 300 peldaños."],
+ cables:["Cables de potencia","Conducen la electricidad generada desde la góndola hasta el transformador en la base de la torre.","Bajan por el interior de la torre."],
+ trafo:["Transformador","Eleva la tensión de la electricidad para reducir pérdidas al enviarla a la red eléctrica.","Eleva a 20–33 kV aproximadamente."],
+ yaw:["Sistema de orientación (yaw)","Rodamiento con motores que gira la góndola para que el rotor mire siempre de frente al viento.","Se guía por la veleta."],
+ gondola:["Góndola","Carcasa que protege y aloja la transmisión, el generador y los sistemas de control.","Puede ser del tamaño de un autobús."],
+ buje:["Buje (hub)","Pieza central que une las palas entre sí y las conecta con el eje principal.","Suele ser de fundición de hierro."],
+ palas:["Palas","Captan la energía del viento mediante sustentación aerodinámica, igual que el ala de un avión.","Fibra de vidrio o carbono; 40 a 100 m de largo."],
+ pitch:["Sistema de pitch","Gira cada pala sobre su propio eje para regular la potencia captada y frenar aerodinámicamente.","Cada pala tiene su propio motor."],
+ eje:["Eje principal","Transmite el giro lento del rotor hacia la multiplicadora.","Gira a 10–20 revoluciones por minuto."],
+ caja:["Multiplicadora","Caja de engranajes de varias etapas: el engranaje grande del eje lento mueve piñones pequeños que aceleran el giro hasta el eje rápido del generador.","Multiplica unas 100 veces (aquí se ven 2 etapas)."],
+ freno:["Freno mecánico","Disco de freno sobre el eje rápido que detiene o sujeta el rotor en mantenimiento o emergencias.","Se suma al freno aerodinámico de las palas."],
+ gen:["Generador","Un rotor giratorio dentro de un estator con bobinas de cobre convierte la energía mecánica en electricidad. Las aletas exteriores lo refrigeran.","Gira a 1000–1800 rpm."],
+ anemo:["Anemómetro y veleta","Miden la velocidad y la dirección del viento para orientar la góndola y decidir cuándo arrancar o parar.","Arranca con unos 3–4 m/s de viento."],
+ bastidor:["Bastidor","Plataforma de acero muy robusta sobre la que se montan todos los componentes de la góndola; transmite sus cargas a la torre.","Suele ser de fundición o acero soldado."],
+ cojinete:["Cojinete principal","Gran rodamiento que sostiene el eje principal y absorbe el empuje del rotor, permitiendo que gire con poca fricción.","Soporta varias toneladas de carga."],
+ control:["Armario de control","Contiene el controlador que lee los sensores y arranca, regula o detiene la turbina según el viento.","Se comunica con un centro de control remoto."]
+};
+const canvas=document.getElementById('c');
+const renderer=new THREE.WebGLRenderer({canvas,antialias:true,alpha:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.localClippingEnabled=true;
+const scene=new THREE.Scene();
+const camera=new THREE.PerspectiveCamera(42,1,.1,200);
+scene.add(new THREE.HemisphereLight(0xffffff,0x6b7f8c,.9));
+const dl=new THREE.DirectionalLight(0xffffff,.8);dl.position.set(6,14,12);scene.add(dl);
+
+const clip=new THREE.Plane(new THREE.Vector3(0,0,-1),0);
+const mat=(c,o={})=>new THREE.MeshStandardMaterial(Object.assign({color:c,metalness:.25,roughness:.55,side:THREE.DoubleSide,clippingPlanes:[clip]},o));
+const mesh=(g,c,o)=>new THREE.Mesh(g,mat(c,o));
+const rotX=g=>{g.rotateZ(Math.PI/2);return g};
+const parts={};
+const reg=(k,o)=>{o.userData.key=k;parts[k]=o;return o};
+
+const root=new THREE.Group();scene.add(root);
+const grid=new THREE.GridHelper(30,30,0x7d93a3,0x9fb3c1);grid.position.y=-.7;grid.material.opacity=.35;grid.material.transparent=true;root.add(grid);
+
+// Cimentación y torre
+const base=mesh(new THREE.CylinderGeometry(1.5,1.5,.8,40),0x8b9196);base.position.y=-.3;root.add(reg('base',base));
+const torre=mesh(new THREE.CylinderGeometry(.45,.65,9,48,1,true),0xeef2f5);torre.position.y=4.5;root.add(reg('torre',torre));
+
+// Escalera
+const esc=new THREE.Group();esc.position.set(-.2,0,-.3);
+[-.12,.12].forEach(x=>{const r=mesh(new THREE.CylinderGeometry(.02,.02,8.6,8),0x555d63);r.position.set(x,4.6,0);esc.add(r)});
+for(let y=.5;y<8.8;y+=.35){const r=mesh(new THREE.CylinderGeometry(.015,.015,.24,6),0x555d63);r.rotation.z=Math.PI/2;r.position.set(0,y,0);esc.add(r)}
+root.add(reg('escalera',esc));
+
+// Cables y transformador
+const cab=mesh(new THREE.CylinderGeometry(.03,.03,8.6,10),0x1f2326);cab.position.set(.2,5.3,-.2);root.add(reg('cables',cab));
+const tr=mesh(new THREE.BoxGeometry(.6,.8,.4),0x3e8e6a);tr.position.set(.2,.5,-.15);root.add(reg('trafo',tr));
+
+// Yaw y góndola
+const yaw=new THREE.Group();
+const yr=mesh(new THREE.CylinderGeometry(.58,.58,.22,40),0x4a5258);yr.position.y=9.1;yaw.add(yr);
+[-.2,.2].forEach(x=>{const mo=mesh(new THREE.CylinderGeometry(.08,.08,.4,16),0xc0392b);mo.position.set(x,8.9,-.05);yaw.add(mo);const pn=mesh(new THREE.CylinderGeometry(.04,.04,.1,10),0xb5bcc1,{metalness:.8});pn.position.set(x,8.65,-.05);yaw.add(pn)});
+root.add(reg('yaw',yaw));
+const gon=mesh(new THREE.BoxGeometry(4.4,1.3,1.4),0xdfe8ee,{transparent:true,opacity:.4,depthWrite:false});gon.position.set(.3,9.85,0);root.add(reg('gondola',gon));
+
+// Tren de potencia
+const Y=9.85,HY=Y-.12,spinners=[];
+const spinIt=(o,v)=>{spinners.push({o,v});return o};
+const STEEL={metalness:.8,roughness:.3};
+function gear(r,w,n,c){const g=new THREE.Group();g.add(mesh(rotX(new THREE.CylinderGeometry(r,r,w,32)),c,STEEL));
+ for(let i=0;i<n;i++){const a=i*2*Math.PI/n,t=mesh(new THREE.BoxGeometry(w,r*.3,r*.2),c,STEEL);t.position.set(0,Math.cos(a)*r,Math.sin(a)*r);t.rotation.x=a;g.add(t)}return g}
+
+// Bastidor
+const bas=new THREE.Group();
+const plate=mesh(new THREE.BoxGeometry(4,.12,1.1),0x4a5258);plate.position.set(.3,9.26,0);bas.add(plate);
+[-.5,.5].forEach(z=>{const b=mesh(new THREE.BoxGeometry(4,.14,.1),0x5d676e);b.position.set(.3,9.39,z);bas.add(b)});
+root.add(reg('bastidor',bas));
+
+// Cojinete principal
+const coj=new THREE.Group();coj.position.set(-1.5,Y,0);
+coj.add(mesh(rotX(new THREE.CylinderGeometry(.34,.34,.5,32)),0x6b757c,{metalness:.6}));
+[-.24,.24].forEach(x=>{const r=mesh(rotX(new THREE.CylinderGeometry(.39,.39,.06,32)),0x4a5258);r.position.x=x;coj.add(r)});
+const ped=mesh(new THREE.BoxGeometry(.6,.3,.8),0x6b757c);ped.position.y=-.45;coj.add(ped);
+root.add(reg('cojinete',coj));
+
+// Eje principal con brida
+const eje=new THREE.Group();
+const es=mesh(rotX(new THREE.CylinderGeometry(.13,.13,1.65,24)),0x9aa3a9,STEEL);es.position.set(-1.175,Y,0);eje.add(es);
+const ef=mesh(rotX(new THREE.CylinderGeometry(.24,.24,.1,32)),0x9aa3a9,STEEL);ef.position.set(-2,Y,0);eje.add(ef);
+root.add(reg('eje',eje));
+
+// Multiplicadora con engranajes
+const gb=new THREE.Group();gb.position.set(.25,Y,0);
+gb.add(mesh(new THREE.BoxGeometry(1.2,1.2,.9),0xd98a3d,{transparent:true,opacity:.35,depthWrite:false}));
+const ls=mesh(rotX(new THREE.CylinderGeometry(.1,.1,.7,16)),0x9aa3a9,STEEL);ls.position.x=-.25;gb.add(ls);
+const im=mesh(rotX(new THREE.CylinderGeometry(.06,.06,1,12)),0x9aa3a9,STEEL);im.position.set(0,-.36,0);gb.add(im);
+const hs=mesh(rotX(new THREE.CylinderGeometry(.045,.045,.7,12)),0x9aa3a9,STEEL);hs.position.set(.25,-.12,0);gb.add(hs);
+const g1=gear(.27,.26,22,0xdde3e7);g1.position.x=-.35;gb.add(spinIt(g1,.006));
+const p1=gear(.1,.26,9,0xb8c0c6);p1.position.set(-.35,-.36,0);gb.add(spinIt(p1,-.016));
+const g2=gear(.2,.2,16,0xcfd6db);g2.position.set(.25,-.36,0);gb.add(spinIt(g2,-.016));
+const p2=gear(.08,.2,8,0xb8c0c6);p2.position.set(.25,-.12,0);gb.add(spinIt(p2,.04));
+root.add(reg('caja',gb));
+
+// Freno, eje rápido y acoplamiento
+const fr=new THREE.Group();fr.position.set(1.15,HY,0);
+fr.add(mesh(rotX(new THREE.CylinderGeometry(.045,.045,.7,12)),0x9aa3a9,STEEL));
+const disc=mesh(rotX(new THREE.CylinderGeometry(.3,.3,.06,36)),0xb5bcc1,STEEL);fr.add(spinIt(disc,.04));
+const cal=mesh(new THREE.BoxGeometry(.16,.22,.14),0xc0392b);cal.position.set(0,.3,0);fr.add(cal);
+const cp=mesh(rotX(new THREE.CylinderGeometry(.14,.14,.2,24)),0x333b40);cp.position.x=.3;fr.add(cp);
+root.add(reg('freno',fr));
+
+// Generador con estator y rotor
+const gen=new THREE.Group();gen.position.set(1.95,HY,0);
+gen.add(mesh(rotX(new THREE.CylinderGeometry(.43,.43,1,36)),0x3b6ea5,{transparent:true,opacity:.4,depthWrite:false}));
+for(let i=0;i<5;i++){const f=mesh(rotX(new THREE.CylinderGeometry(.46,.46,.04,36)),0x2c527d);f.position.x=-.4+i*.2;gen.add(f)}
+gen.add(mesh(rotX(new THREE.CylinderGeometry(.34,.34,.7,32,1,true)),0xb87333,{metalness:.6}));
+const ro=mesh(rotX(new THREE.CylinderGeometry(.24,.24,.9,28)),0x7b858c,STEEL);gen.add(spinIt(ro,.04));
+const tb=mesh(new THREE.BoxGeometry(.3,.16,.26),0x2c527d);tb.position.set(.1,.52,0);gen.add(tb);
+root.add(reg('gen',gen));
+
+// Armario de control
+const ctl=new THREE.Group();ctl.position.set(-.75,9.77,-.5);
+ctl.add(mesh(new THREE.BoxGeometry(.5,.9,.28),0x5a7a96));
+const scr=mesh(new THREE.BoxGeometry(.3,.2,.01),0x10181e);scr.position.set(0,.2,.145);ctl.add(scr);
+[0x2ecc71,0xf1c40f,0xe74c3c].forEach((c,i)=>{const l=mesh(new THREE.SphereGeometry(.025,10,8),c,{emissive:c,emissiveIntensity:.5});l.position.set(-.12+i*.12,-.1,.145);ctl.add(l)});
+root.add(reg('control',ctl));
+
+// Anemómetro y veleta
+const an=new THREE.Group();an.position.set(2.0,10.5,0);
+const mast=mesh(new THREE.CylinderGeometry(.03,.03,.5,10),0x333b40);mast.position.y=.25;an.add(mast);
+for(let i=0;i<3;i++){const a=i*2*Math.PI/3,arm=mesh(new THREE.CylinderGeometry(.015,.015,.22,6),0x333b40);arm.rotation.z=Math.PI/2;arm.rotation.y=-a;arm.position.set(Math.cos(a)*.11,.52,Math.sin(a)*.11);an.add(arm);
+ const cup=mesh(new THREE.SphereGeometry(.06,12,10),0xd2641c);cup.position.set(Math.cos(a)*.22,.52,Math.sin(a)*.22);an.add(cup)}
+const vane=mesh(new THREE.BoxGeometry(.5,.12,.015),0x333b40);vane.position.set(-.3,.3,0);an.add(vane);
+root.add(reg('anemo',an));
+
+// Rotor
+const rotor=new THREE.Group();rotor.position.set(-2.45,Y,0);root.add(rotor);
+const hub=mesh(new THREE.SphereGeometry(.55,36,24),0xf4f6f8,{transparent:true,opacity:.55,depthWrite:false});hub.scale.x=1.3;rotor.add(reg('buje',hub));
+const pitch=new THREE.Group(),blades=new THREE.Group();
+const sh=new THREE.Shape();
+[[-.22,0],[.22,0],[.38,.5],[.3,1.5],[.1,3.5],[.03,4.2],[-.04,4.2],[-.2,3.5],[-.3,1.5],[-.3,.7]].forEach((p,i)=>i?sh.lineTo(p[0],p[1]):sh.moveTo(p[0],p[1]));
+const bg=new THREE.ExtrudeGeometry(sh,{depth:.1,bevelEnabled:false});bg.translate(0,.5,-.05);
+for(let k=0;k<3;k++){
+ const pv=new THREE.Group();pv.rotation.x=k*2*Math.PI/3;
+ const m=mesh(new THREE.CylinderGeometry(.14,.14,.3,20),0x2fa36b);m.position.y=.33;pv.add(m);pitch.add(pv);
+ const pb=new THREE.Group();pb.rotation.x=k*2*Math.PI/3;pb.add(mesh(bg,0xffffff,{roughness:.35}));blades.add(pb);
+}
+rotor.add(reg('pitch',pitch));rotor.add(reg('palas',blades));
+
+// UI
+const panelN=document.getElementById('pn'),panelD=document.getElementById('pd'),panelT=document.getElementById('pt'),bar=document.getElementById('bar');
+let sel=null;const chips={};
+Object.keys(INFO).forEach(k=>{const b=document.createElement('button');b.textContent=INFO[k][0];b.onclick=()=>select(k);bar.appendChild(b);chips[k]=b});
+function glow(o,on){o.traverse(n=>{if(n.isMesh){n.material.emissive.setHex(on?0xff7a1a:0x000000);n.material.emissiveIntensity=on?.55:0}})}
+function select(k){
+ if(sel){glow(parts[sel],false);chips[sel].classList.remove('on')}
+ sel=k;
+ if(k){glow(parts[k],true);chips[k].classList.add('on');chips[k].scrollIntoView({block:'nearest',inline:'center'});
+  panelN.textContent=INFO[k][0];panelD.textContent=INFO[k][1];panelT.textContent=INFO[k][2];panelT.hidden=false}
+}
+
+// Cámara orbital
+const tgt=new THREE.Vector3(-.3,5.2,0),home={th:.45,ph:1.3,rad:21};
+let th=home.th,ph=home.ph,rad=home.rad;
+function place(){camera.position.set(tgt.x+rad*Math.sin(ph)*Math.sin(th),tgt.y+rad*Math.cos(ph),tgt.z+rad*Math.sin(ph)*Math.cos(th));camera.lookAt(tgt)}
+function resize(){const w=canvas.clientWidth,h=canvas.clientHeight;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix()}
+addEventListener('resize',resize);
+const ptrs=new Map();let moved=0,pinch=0;
+canvas.addEventListener('pointerdown',e=>{canvas.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,e);moved=0;pinch=0});
+canvas.addEventListener('pointermove',e=>{
+ const prev=ptrs.get(e.pointerId);
+ if(!prev){hover(e);return}
+ if(ptrs.size===1){const dx=e.clientX-prev.clientX,dy=e.clientY-prev.clientY;moved+=Math.abs(dx)+Math.abs(dy);th-=dx*.006;ph=Math.min(1.8,Math.max(.25,ph-dy*.006))}
+ else if(ptrs.size===2){ptrs.set(e.pointerId,e);const [a,b]=[...ptrs.values()],d=Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);if(pinch)rad=Math.min(40,Math.max(6,rad*pinch/d));pinch=d;moved+=10}
+ ptrs.set(e.pointerId,e);
+});
+canvas.addEventListener('pointerup',e=>{const was=ptrs.size===1&&moved<6;ptrs.delete(e.pointerId);if(was)pick(e)});
+canvas.addEventListener('pointercancel',e=>ptrs.delete(e.pointerId));
+canvas.addEventListener('wheel',e=>{e.preventDefault();rad=Math.min(40,Math.max(6,rad*(1+e.deltaY*.001)))},{passive:false});
+
+const ray=new THREE.Raycaster(),v2=new THREE.Vector2();
+function hit(e){
+ const r=canvas.getBoundingClientRect();v2.set((e.clientX-r.left)/r.width*2-1,-((e.clientY-r.top)/r.height)*2+1);
+ ray.setFromCamera(v2,camera);
+ for(const h of ray.intersectObjects(root.children,true)){
+  if(h.point.z>.02)continue;
+  let o=h.object;while(o&&!(o.userData&&o.userData.key))o=o.parent;
+  if(o)return o.userData.key;
+ }
+ return null;
+}
+function pick(e){const k=hit(e);if(k)select(k)}
+function hover(e){canvas.style.cursor=hit(e)?'pointer':'grab'}
+
+let spin=true;const sb=document.getElementById('spin');
+sb.onclick=()=>{spin=!spin;sb.textContent=spin?'Detener giro':'Girar piezas'};
+document.getElementById('reset').onclick=()=>{th=home.th;ph=home.ph;rad=home.rad};
+
+function loop(){requestAnimationFrame(loop);if(spin){rotor.rotation.x+=.006;spinners.forEach(s=>s.o.rotation.x+=s.v)}place();renderer.render(scene,camera)}
+resize();loop();
+</script>
+</body>
+</html>
